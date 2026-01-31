@@ -1,0 +1,66 @@
+import requests
+
+API_KEY = '4523fd9644270350218bf88725b07759'
+SPORT = 'soccer_epl'  # Valioliiga on hyvä testikohde
+REGION = 'uk'
+MARKET = 'h2h'
+TOTAL_BUDGET = 1000  # Paljonko haluat sijoittaa yhteensä
+
+
+def fetch_and_scan_advanced():
+    url = f'https://api.the-odds-api.com/v4/sports/{SPORT}/odds/?apiKey={API_KEY}&regions={REGION}&markets={MARKET}'
+    response = requests.get(url)
+
+    if response.status_code != 200:
+        print("Virhe API-haussa.")
+        return
+
+    matches = response.json()
+
+    for match in matches:
+        outcomes_data = {}  # Tallennetaan parhaat kertoimet tähän
+
+        # Käydään läpi kaikki vedonvälittäjät ottelulle
+        for bookmaker in match['bookmakers']:
+            for market in bookmaker['markets']:
+                if market['key'] == 'h2h':
+                    for outcome in market['outcomes']:
+                        name = outcome['name']
+                        price = outcome['price']
+
+                        if name not in outcomes_data or price > outcomes_data[name]['price']:
+                            outcomes_data[name] = {
+                                'price': price,
+                                'bookmaker': bookmaker['title']
+                            }
+
+        # Tarkistetaan onko meillä kertoimet kaikille vaihtoehdoille (2 tai 3)
+        names = list(outcomes_data.keys())
+        odds_values = [outcomes_data[n]['price'] for n in names]
+
+        if len(odds_values) < 2: continue
+
+        # 1. Arbitraasin laskenta: 1/O1 + 1/O2 + 1/O3
+        arb_percentage = sum(1 / o for o in odds_values)
+
+        if arb_percentage < 1.0:
+            print(f"\n✅ ARBITRAASI LÖYTYI: {match['home_team']} vs {match['away_team']}")
+            print(f"Tuottoprosentti: {(1 - arb_percentage) * 100:.2f}%")
+
+            # 2. Panosten laskeminen kullekin kohteelle
+            print(f"Suositellut panokset ({TOTAL_BUDGET}€ yhteensä):")
+
+            for name in names:
+                price = outcomes_data[name]['price']
+                bookie = outcomes_data[name]['bookmaker']
+                # Kaava: (1 / kerroin / arb_prosentti) * kokonaisbudjetti
+                individual_stake = (1 / price / arb_percentage) * TOTAL_BUDGET
+
+                print(f"  - {name}: {individual_stake:.2f}€ | Kerroin: {price} | Sivusto: {bookie}")
+
+            taattu_palautus = (1 / arb_percentage) * TOTAL_BUDGET
+            print(f"Taattu palautus: {taattu_palautus:.2f}€ (Voitto: {taattu_palautus - TOTAL_BUDGET:.2f}€)")
+            print("-" * 50)
+
+
+fetch_and_scan_advanced()
