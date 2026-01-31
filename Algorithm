@@ -1,66 +1,89 @@
 import requests
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 
+app = FastAPI()
+
+# Sallitaan yhteydet Lovable-frontendistä
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- ASETUKSET ---
 API_KEY = '4523fd9644270350218bf88725b07759'
-SPORT = 'soccer_epl'  # Valioliiga on hyvä testikohde
+SPORT = 'soccer_epl'  # Voit vaihtaa esim. 'upcoming' nähdäksesi enemmän pelejä
 REGION = 'uk'
-MARKET = 'h2h'
-TOTAL_BUDGET = 1000  # Paljonko haluat sijoittaa yhteensä
 
 
-def fetch_and_scan_advanced():
-    url = f'https://api.the-odds-api.com/v4/sports/{SPORT}/odds/?apiKey={API_KEY}&regions={REGION}&markets={MARKET}'
-    response = requests.get(url)
+@app.get("/get-arbitrage")
+def get_arbitrage_data():
+    url = f'https://api.the-odds-api.com/v4/sports/{SPORT}/odds/?apiKey={API_KEY}&regions={REGION}&markets=h2h'
 
-    if response.status_code != 200:
-        print("Virhe API-haussa.")
-        return
+    try:
+        response = requests.get(url)
+        matches = response.json()
 
-    matches = response.json()
+        if response.status_code != 200:
+            return {"error": "API-virhe", "details": matches}
 
-    for match in matches:
-        outcomes_data = {}  # Tallennetaan parhaat kertoimet tähän
+        found_arbitrages = []
 
-        # Käydään läpi kaikki vedonvälittäjät ottelulle
-        for bookmaker in match['bookmakers']:
-            for market in bookmaker['markets']:
-                if market['key'] == 'h2h':
-                    for outcome in market['outcomes']:
-                        name = outcome['name']
-                        price = outcome['price']
+        for match in matches:
+            outcomes_data = {}
 
-                        if name not in outcomes_data or price > outcomes_data[name]['price']:
-                            outcomes_data[name] = {
-                                'price': price,
-                                'bookmaker': bookmaker['title']
-                            }
+            # Etsitään parhaat kertoimet jokaiselle lopputulokselle
+            for bookmaker in match.get('bookmakers', []):
+                for market in bookmaker.get('markets', []):
+                    if market['key'] == 'h2h':
+                        for outcome in market['outcomes']:
+                            name = outcome['name']
+                            price = outcome['price']
 
-        # Tarkistetaan onko meillä kertoimet kaikille vaihtoehdoille (2 tai 3)
-        names = list(outcomes_data.keys())
-        odds_values = [outcomes_data[n]['price'] for n in names]
+                            if name not in outcomes_data or price > outcomes_data[name]['price']:
+                                outcomes_data[name] = {
+                                    'price': price,
+                                    'bookie': bookmaker['title']
+                                }
 
-        if len(odds_values) < 2: continue
+            # Lasketaan arbitraasi (tuki 2 tai 3 lopputulokselle, esim. jalkapallo)
+            odds_list = [item['price'] for item in outcomes_data.values()]
+            if len(odds_list) < 2:
+                continue
 
-        # 1. Arbitraasin laskenta: 1/O1 + 1/O2 + 1/O3
-        arb_percentage = sum(1 / o for o in odds_values)
+            arb_percentage = sum(1 / o for o in odds_list)
 
-        if arb_percentage < 1.0:
-            print(f"\n✅ ARBITRAASI LÖYTYI: {match['home_team']} vs {match['away_team']}")
-            print(f"Tuottoprosentti: {(1 - arb_percentage) * 100:.2f}%")
+            # Jos arbitraasi löytyy (alle 100%)
+            if arb_percentage < 1.0:
+                profit_pct = (1 - arb_percentage) * 100
 
-            # 2. Panosten laskeminen kullekin kohteelle
-            print(f"Suositellut panokset ({TOTAL_BUDGET}€ yhteensä):")
+                # Muotoillaan data Lovablea varten
+                found_arbitrages.append({
+                    "id": match['id'],
+                    "teams": f"{match['home_team']} vs {match['away_team']}",
+                    "home_team": match['home_team'],
+                    "away_team": match['away_team'],
+                    "profit": round(profit_pct, 2),
+                    "outcomes": [
+                        {
+                            "name": name,
+                            "price": data['price'],
+                            "bookie": data['bookie']
+                        } for name, data in outcomes_data.items()
+                    ],
+                    "commence_time": match['commence_time']
+                })
 
-            for name in names:
-                price = outcomes_data[name]['price']
-                bookie = outcomes_data[name]['bookmaker']
-                # Kaava: (1 / kerroin / arb_prosentti) * kokonaisbudjetti
-                individual_stake = (1 / price / arb_percentage) * TOTAL_BUDGET
+        return found_arbitrages
 
-                print(f"  - {name}: {individual_stake:.2f}€ | Kerroin: {price} | Sivusto: {bookie}")
-
-            taattu_palautus = (1 / arb_percentage) * TOTAL_BUDGET
-            print(f"Taattu palautus: {taattu_palautus:.2f}€ (Voitto: {taattu_palautus - TOTAL_BUDGET:.2f}€)")
-            print("-" * 50)
+    except Exception as e:
+        return {"error": str(e)}
 
 
-fetch_and_scan_advanced()
+if __name__ == "__main__":
+    # Käynnistää palvelimen porttiin 8000
+    uvicorn.run(app, host="0.0.0.0", port=8000)
