@@ -1,0 +1,86 @@
+import requests
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import os
+
+app = FastAPI()
+
+# Sallitaan yhteydet Lovable-frontendistä
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- ASETUKSET ---
+# Haetaan API_KEY ensisijaisesti Vercelin ympäristömuuttujista (Environment Variables)
+API_KEY = os.getenv('THE_ODDS_API_KEY', '4523fd9644270350218bf88725b07759')
+SPORT = 'soccer_epl'
+REGION = 'uk'
+
+@app.get("/get-arbitrage")
+def get_arbitrage_data():
+    url = f'https://api.the-odds-api.com/v4/sports/{SPORT}/odds/?apiKey={API_KEY}&regions={REGION}&markets=h2h'
+
+    try:
+        response = requests.get(url)
+        
+        if response.status_code != 200:
+            return {"error": "API-virhe", "status": response.status_code}
+            
+        matches = response.json()
+        found_arbitrages = []
+
+        for match in matches:
+            outcomes_data = {}
+
+            # Etsitään parhaat kertoimet jokaiselle lopputulokselle
+            for bookmaker in match.get('bookmakers', []):
+                for market in bookmaker.get('markets', []):
+                    if market['key'] == 'h2h':
+                        for outcome in market['outcomes']:
+                            name = outcome['name']
+                            price = outcome['price']
+
+                            if name not in outcomes_data or price > outcomes_data[name]['price']:
+                                outcomes_data[name] = {
+                                    'price': price,
+                                    'bookie': bookmaker['title']
+                                }
+
+            # Lasketaan arbitraasi
+            odds_list = [item['price'] for item in outcomes_data.values()]
+            if len(odds_list) < 2:
+                continue
+
+            arb_percentage = sum(1 / o for o in odds_list)
+
+            # Jos arbitraasi löytyy (alle 100%)
+            if arb_percentage < 1.0:
+                profit_pct = (1 - arb_percentage) * 100
+
+                found_arbitrages.append({
+                    "id": match['id'],
+                    "teams": f"{match['home_team']} vs {match['away_team']}",
+                    "home_team": match['home_team'],
+                    "away_team": match['away_team'],
+                    "profit": round(profit_pct, 2),
+                    "outcomes": [
+                        {
+                            "name": name,
+                            "price": data['price'],
+                            "bookie": data['bookie']
+                        } for name, data in outcomes_data.items()
+                    ],
+                    "commence_time": match['commence_time']
+                })
+
+        return found_arbitrages
+
+    except Exception as e:
+        return {"error": str(e)}
+
+# Vercel ei tarvitse uvicorn.run()-osiota, 
+# se käyttää 'app'-objektia suoraan.
