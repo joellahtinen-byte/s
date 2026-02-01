@@ -1,11 +1,11 @@
 import requests
 from fastapi import FastAPI
+from datetime import datetime, timezone
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 app = FastAPI()
 
-# Sallitaan yhteydet Lovable-frontendistä
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,75 +15,165 @@ app.add_middleware(
 )
 
 # --- ASETUKSET ---
-API_KEY = '4523fd9644270350218bf88725b07759'
-SPORT = 'soccer_epl'  # Voit vaihtaa esim. 'upcoming' nähdäksesi enemmän pelejä
-REGION = 'uk'
+API_KEY = '75fc91373cc4f2f007c6b356a214a097'
+SPORTS = ['upcoming']
+REGION = 'eu'
 
+# Vedonlyöntipörssit, joissa käytetään 2% komissiota laskennassa
+EXCHANGES = ["Smarkets", "Betfair", "Matchbook", "Betfair Exchange"]
+
+BOOKIE_URLS = {
+    # Isot UK-toimijat
+    "Bet365": "https://www.bet365.com",
+    "Betfair": "https://www.betfair.com/betting/",
+    "Paddy Power": "https://www.paddypower.com",
+    "William Hill": "https://www.williamhill.com",
+    "Unibet": "https://www.unibet.co.uk",
+    "Unibet (UK)": "https://www.unibet.co.uk",
+    "Ladbrokes": "https://www.ladbrokes.com",
+    "Coral": "https://www.coral.co.uk",
+    "888sport": "https://www.888sport.com",
+    "Sky Bet": "https://www.skybet.com",
+    "Betway": "https://www.betway.com",
+    "Bet Victor": "https://www.betvictor.com",
+    "Smarkets": "https://smarkets.com",
+    "Matchbook": "https://www.matchbook.com",
+    "Virgin Bet": "https://www.virginbet.com",
+    "LeoVegas": "https://www.leovegas.com",
+    "Casumo": "https://www.casumo.com",
+    "BoyleSports": "https://www.boylesports.com",
+    "Betfred": "https://www.betfred.com",
+    "NetBet": "https://www.netbet.co.uk",
+    "QuinnBet": "https://www.quinnbet.com",
+    "LiveScore Bet": "https://www.livescorebet.com",
+    "Spreadex": "https://www.spreadex.com",
+    "Sporting Index": "https://www.sportingindex.com",
+    "Marathon Bet": "https://www.marathonbet.co.uk",
+    "Betting.bet": "https://betting.bet",
+    "Kwiff": "https://www.kwiff.com",
+    "Vbet": "https://www.vbet.co.uk",
+    "Grosvenor Sports": "https://www.grosvenorcasinos.com/sport",
+    "Mr Green": "https://www.mrgreen.com/en-gb/betting",
+    "StarSports": "https://www.starsports.bet",
+    "Midnite": "https://www.midnite.com",
+    "BetGoodwin": "https://www.betgoodwin.co.uk",
+
+    # Pohjoismaiset ja yleiset EU-toimijat
+    "NordicBet": "https://www.nordicbet.com",
+    "Betsafe": "https://www.betsafe.com",
+    "Betsson": "https://www.betsson.com",
+    "Coolbet": "https://www.coolbet.com",
+    "Expekt": "https://www.expekt.com",
+    "Mr Green (EU)": "https://www.mrgreen.com",
+    "Paf": "https://www.paf.com",
+
+    # Keski-Euroopan ja kansainväliset suuret toimijat
+    "Bwin": "https://www.bwin.com",
+    "Sportingbet": "https://www.sportingbet.com",
+    "Betclic": "https://www.betclic.com",
+    "Interwetten": "https://www.interwetten.com",
+    "Tipico": "https://www.tipico.com",
+    "Bet-at-home": "https://www.bet-at-home.com",
+    "Winamax": "https://www.winamax.fr",
+    "Stoiximan": "https://www.stoiximan.gr",
+    "Betano": "https://www.betano.com",
+
+    # Lisää pienempiä/uudempia EU-toimijoita
+    "Pinnacle": "https://www.pinnacle.com",
+    "Cloudbet": "https://www.cloudbet.com",
+    "Stake": "https://stake.com",
+    "GGBet": "https://gg.bet",
+    "22Bet": "https://22bet.com",
+    "1xBet": "https://1xbet.com",
+    "Melbet": "https://melbet.com",
+    "Rabona": "https://rabona.com",
+    "Campobet": "https://campobet.com"
+}
 
 @app.get("/get-arbitrage")
 def get_arbitrage_data():
-    url = f'https://api.the-odds-api.com/v4/sports/{SPORT}/odds/?apiKey={API_KEY}&regions={REGION}&markets=h2h'
+    all_arbitrages = []
 
-    try:
-        response = requests.get(url)
-        matches = response.json()
+    for sport_key in SPORTS:
+        url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={API_KEY}&regions={REGION}&markets=h2h&includeLinks=true'
 
-        if response.status_code != 200:
-            return {"error": "API-virhe", "details": matches}
-
-        found_arbitrages = []
-
-        for match in matches:
-            outcomes_data = {}
-
-            # Etsitään parhaat kertoimet jokaiselle lopputulokselle
-            for bookmaker in match.get('bookmakers', []):
-                for market in bookmaker.get('markets', []):
-                    if market['key'] == 'h2h':
-                        for outcome in market['outcomes']:
-                            name = outcome['name']
-                            price = outcome['price']
-
-                            if name not in outcomes_data or price > outcomes_data[name]['price']:
-                                outcomes_data[name] = {
-                                    'price': price,
-                                    'bookie': bookmaker['title']
-                                }
-
-            # Lasketaan arbitraasi (tuki 2 tai 3 lopputulokselle, esim. jalkapallo)
-            odds_list = [item['price'] for item in outcomes_data.values()]
-            if len(odds_list) < 2:
+        try:
+            response = requests.get(url)
+            if response.status_code != 200:
                 continue
 
-            arb_percentage = sum(1 / o for o in odds_list)
+            matches = response.json()
 
-            # Jos arbitraasi löytyy (alle 100%)
-            if arb_percentage < 1.0:
-                profit_pct = (1 - arb_percentage) * 100
+            for match in matches:
+                # 1. LIVE-TILAN JA AJAN TARKISTUS
+                commence_time_raw = match.get('commence_time')
+                is_live = False
+                if commence_time_raw:
+                    start_dt = datetime.fromisoformat(commence_time_raw.replace('Z', '+00:00'))
+                    if datetime.now(timezone.utc) > start_dt:
+                        is_live = True
 
-                # Muotoillaan data Lovablea varten
-                found_arbitrages.append({
-                    "id": match['id'],
-                    "teams": f"{match['home_team']} vs {match['away_team']}",
-                    "home_team": match['home_team'],
-                    "away_team": match['away_team'],
-                    "profit": round(profit_pct, 2),
-                    "outcomes": [
-                        {
+                outcomes_data = {}
+                for bookmaker in match.get('bookmakers', []):
+                    bookie_name = bookmaker['title']
+                    for market in bookmaker.get('markets', []):
+                        if market['key'] == 'h2h':
+                            for outcome in market['outcomes']:
+                                name = outcome['name']
+                                price = outcome['price']
+                                link = outcome.get('link')
+
+                                # 2. KOMISSION HUOMIOIMINEN PÖRSSISIVUILLA (Nettokerroin)
+                                calculation_price = price
+                                if bookie_name in EXCHANGES:
+                                    calculation_price = 1 + (price - 1) * 0.98
+
+                                if name not in outcomes_data or calculation_price > outcomes_data[name]['calc_price']:
+                                    outcomes_data[name] = {
+                                        'price': price, # Alkuperäinen kerroin näytettäväksi
+                                        'calc_price': calculation_price, # Kerroin jota käytetään voiton laskemiseen
+                                        'bookie': bookie_name,
+                                        'link': link
+                                    }
+
+                # Lasketaan arbitraasiprosentti nettokertoimilla
+                calc_odds_list = [item['calc_price'] for item in outcomes_data.values()]
+                if len(calc_odds_list) < 2:
+                    continue
+
+                arb_percentage = sum(1 / o for o in calc_odds_list)
+
+                # Hyväksytään vain realistiset arbitraasit (ei selkeitä API-virheitä eli > 25% voittoja)
+                if 0.75 < arb_percentage < 1.0:
+                    outcomes_list = []
+                    for name, data in outcomes_data.items():
+                        # LINKKI-LOGIIKKA
+                        final_link = data['link'] if data.get('link') else BOOKIE_URLS.get(
+                            data['bookie'], f"https://duckduckgo.com/?q={data['bookie']}+betting"
+                        )
+
+                        outcomes_list.append({
                             "name": name,
                             "price": data['price'],
-                            "bookie": data['bookie']
-                        } for name, data in outcomes_data.items()
-                    ],
-                    "commence_time": match['commence_time']
-                })
+                            "bookie": data['bookie'],
+                            "link": final_link,
+                            "has_commission": data['bookie'] in EXCHANGES
+                        })
 
-        return found_arbitrages
+                    all_arbitrages.append({
+                        "id": match['id'],
+                        "sport": match['sport_title'],
+                        "teams": f"{match['home_team']} vs {match['away_team']}",
+                        "profit": round((1 - arb_percentage) * 100, 2),
+                        "is_live": is_live,
+                        "commence_time": commence_time_raw,
+                        "outcomes": outcomes_list
+                    })
 
-    except Exception as e:
-        return {"error": str(e)}
+        except Exception as e:
+            print(f"Virhe: {e}")
 
+    return sorted(all_arbitrages, key=lambda x: x['profit'], reverse=True)
 
 if __name__ == "__main__":
-    # Käynnistää palvelimen porttiin 8000
     uvicorn.run(app, host="0.0.0.0", port=8000)
